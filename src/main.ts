@@ -11,7 +11,9 @@ import {getAnnotations} from './report/get-annotations'
 import {getReport} from './report/get-report'
 
 import {DartJsonParser} from './parsers/dart-json/dart-json-parser'
+import {DotnetNunitParser} from './parsers/dotnet-nunit/dotnet-nunit-parser'
 import {DotnetTrxParser} from './parsers/dotnet-trx/dotnet-trx-parser'
+import {GolangJsonParser} from './parsers/golang-json/golang-json-parser'
 import {JavaJunitParser} from './parsers/java-junit/java-junit-parser'
 import {JestJunitParser} from './parsers/jest-junit/jest-junit-parser'
 import {MochaJsonParser} from './parsers/mocha-json/mocha-json-parser'
@@ -37,13 +39,16 @@ class TestReporter {
   readonly path = core.getInput('path', {required: true})
   readonly pathReplaceBackslashes = core.getInput('path-replace-backslashes', {required: false}) === 'true'
   readonly reporter = core.getInput('reporter', {required: true})
-  readonly listSuites = core.getInput('list-suites', {required: true}) as 'all' | 'failed'
+  readonly listSuites = core.getInput('list-suites', {required: true}) as 'all' | 'failed' | 'none'
   readonly listTests = core.getInput('list-tests', {required: true}) as 'all' | 'failed' | 'none'
   readonly maxAnnotations = parseInt(core.getInput('max-annotations', {required: true}))
   readonly failOnError = core.getInput('fail-on-error', {required: true}) === 'true'
   readonly failOnEmpty = core.getInput('fail-on-empty', {required: true}) === 'true'
   readonly workDirInput = core.getInput('working-directory', {required: false})
   readonly onlySummary = core.getInput('only-summary', {required: false}) === 'true'
+  readonly useActionsSummary = core.getInput('use-actions-summary', {required: false}) === 'true'
+  readonly badgeTitle = core.getInput('badge-title', {required: false})
+  readonly reportTitle = core.getInput('report-title', {required: false})
   readonly token = core.getInput('token', {required: true})
   readonly octokit: InstanceType<typeof GitHub>
   readonly context = getCheckRunContext()
@@ -51,7 +56,7 @@ class TestReporter {
   constructor() {
     this.octokit = github.getOctokit(this.token)
 
-    if (this.listSuites !== 'all' && this.listSuites !== 'failed') {
+    if (this.listSuites !== 'all' && this.listSuites !== 'failed' && this.listSuites !== 'none') {
       core.setFailed(`Input parameter 'list-suites' has invalid value`)
       return
     }
@@ -161,51 +166,77 @@ class TestReporter {
       }
     }
 
-    core.info(`Creating check run ${name}`)
-    const createResp = await this.octokit.rest.checks.create({
-      head_sha: this.context.sha,
-      name,
-      status: 'in_progress',
-      output: {
-        title: name,
-        summary: ''
-      },
-      ...github.context.repo
-    })
+    const {listSuites, listTests, onlySummary, useActionsSummary, badgeTitle, reportTitle} = this
 
-    core.info('Creating report summary')
-    const {listSuites, listTests, onlySummary} = this
-    const baseUrl = createResp.data.html_url as string
-    const summary = getReport(results, {listSuites, listTests, baseUrl, onlySummary})
+    let baseUrl = ''
+    if (this.useActionsSummary) {
+      const summary = getReport(results, {
+        listSuites,
+        listTests,
+        baseUrl,
+        onlySummary,
+        useActionsSummary,
+        badgeTitle,
+        reportTitle
+      })
 
-    core.info('Creating annotations')
-    const annotations = getAnnotations(results, this.maxAnnotations)
+      core.info('Summary content:')
+      core.info(summary)
+      await core.summary.addRaw(summary).write()
+    } else {
+      core.info(`Creating check run ${name}`)
+      const createResp = await this.octokit.rest.checks.create({
+        head_sha: this.context.sha,
+        name,
+        status: 'in_progress',
+        output: {
+          title: name,
+          summary: ''
+        },
+        ...github.context.repo
+      })
 
-    const isFailed = this.failOnError && results.some(tr => tr.result === 'failed')
-    const conclusion = isFailed ? 'failure' : 'success'
+      core.info('Creating report summary')
+      baseUrl = createResp.data.html_url as string
+      const summary = getReport(results, {
+        listSuites,
+        listTests,
+        baseUrl,
+        onlySummary,
+        useActionsSummary,
+        badgeTitle,
+        reportTitle
+      })
 
-    const passed = results.reduce((sum, tr) => sum + tr.passed, 0)
-    const failed = results.reduce((sum, tr) => sum + tr.failed, 0)
-    const skipped = results.reduce((sum, tr) => sum + tr.skipped, 0)
-    const shortSummary = `${passed} passed, ${failed} failed and ${skipped} skipped `
+      core.info('Creating annotations')
+      const annotations = getAnnotations(results, this.maxAnnotations)
 
-    core.info(`Updating check run conclusion (${conclusion}) and output`)
-    const resp = await this.octokit.rest.checks.update({
-      check_run_id: createResp.data.id,
-      conclusion,
-      status: 'completed',
-      output: {
-        title: shortSummary,
-        summary,
-        annotations
-      },
-      ...github.context.repo
-    })
-    core.info(`Check run create response: ${resp.status}`)
-    core.info(`Check run URL: ${resp.data.url}`)
-    core.info(`Check run HTML: ${resp.data.html_url}`)
-    core.setOutput('url', resp.data.url)
-    core.setOutput('url_html', resp.data.html_url)
+      const isFailed = this.failOnError && results.some(tr => tr.result === 'failed')
+      const conclusion = isFailed ? 'failure' : 'success'
+
+      const passed = results.reduce((sum, tr) => sum + tr.passed, 0)
+      const failed = results.reduce((sum, tr) => sum + tr.failed, 0)
+      const skipped = results.reduce((sum, tr) => sum + tr.skipped, 0)
+      const shortSummary = `${passed} passed, ${failed} failed and ${skipped} skipped `
+
+      core.info(`Updating check run conclusion (${conclusion}) and output`)
+      const resp = await this.octokit.rest.checks.update({
+        check_run_id: createResp.data.id,
+        conclusion,
+        status: 'completed',
+        output: {
+          title: shortSummary,
+          summary,
+          annotations
+        },
+        ...github.context.repo
+      })
+      core.info(`Check run create response: ${resp.status}`)
+      core.info(`Check run URL: ${resp.data.url}`)
+      core.info(`Check run HTML: ${resp.data.html_url}`)
+      core.setOutput('url', resp.data.url)
+      core.setOutput('url_html', resp.data.html_url)
+    }
 
     return results
   }
@@ -214,8 +245,12 @@ class TestReporter {
     switch (reporter) {
       case 'dart-json':
         return new DartJsonParser(options, 'dart')
+      case 'dotnet-nunit':
+        return new DotnetNunitParser(options)
       case 'dotnet-trx':
         return new DotnetTrxParser(options)
+      case 'golang-json':
+        return new GolangJsonParser(options)
       case 'flutter-json':
         return new DartJsonParser(options, 'flutter')
       case 'java-junit':

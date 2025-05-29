@@ -43,7 +43,7 @@ export class JestJunitParser implements TestParser {
             return sr
           })
 
-    const time = parseFloat(junit.testsuites.$.time) * 1000
+    const time = junit.testsuites.$ && parseFloat(junit.testsuites.$.time) * 1000
     return new TestRunResult(path, suites, time)
   }
 
@@ -85,7 +85,7 @@ export class JestJunitParser implements TestParser {
       return undefined
     }
 
-    const details = tc.failure[0]
+    const details = typeof tc.failure[0] === 'string' ? tc.failure[0] : tc.failure[0]['_']
     let path
     let line
 

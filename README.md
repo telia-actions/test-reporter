@@ -2,7 +2,7 @@
 
 This [Github Action](https://github.com/features/actions) displays test results from popular testing frameworks directly in GitHub.
 
-✔️ Parses test results in XML or JSON format and creates nice report as Github Check Run
+✔️ Parses test results in XML or JSON format and creates nice report as GitHub Check Run or GitHub Actions job summaries
 
 ✔️ Annotates code where it failed based on message and stack trace captured during test execution
 
@@ -13,9 +13,10 @@ This [Github Action](https://github.com/features/actions) displays test results 
 |:--:|:--:|:--:|:--:|
 
 **Supported languages / frameworks:**
-- .NET / [xUnit](https://xunit.net/) / [NUnit](https://nunit.org/) / [MSTest](https://github.com/Microsoft/testfx-docs)
+- .NET / [dotnet test](https://docs.microsoft.com/en-us/dotnet/core/tools/dotnet-test#examples) ( [xUnit](https://xunit.net/) / [NUnit](https://nunit.org/) / [MSTest](https://github.com/Microsoft/testfx-docs) )
 - Dart / [test](https://pub.dev/packages/test)
 - Flutter / [test](https://pub.dev/packages/test)
+- Go / [go test](https://pkg.go.dev/testing)
 - Java / [JUnit](https://junit.org/)
 - JavaScript / [JEST](https://jestjs.io/) / [Mocha](https://mochajs.org/)
 - Swift / xUnit
@@ -43,13 +44,13 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3     # checkout the repo
+      - uses: actions/checkout@v4     # checkout the repo
       - run: npm ci                   # install packages
       - run: npm test                 # run tests (configured to use jest-junit reporter)
 
       - name: Test Report
-        uses: dorny/test-reporter@v1
-        if: success() || failure()    # run this step even if previous step failed
+        uses: dorny/test-reporter@v2
+        if: ${{ !cancelled() }}       # run this step even if previous step failed
         with:
           name: JEST Tests            # Name of the check run which will be created
           path: reports/jest-*.xml    # Path to test results
@@ -74,11 +75,11 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3         # checkout the repo
+      - uses: actions/checkout@v4         # checkout the repo
       - run: npm ci                       # install packages
       - run: npm test                     # run tests (configured to use jest-junit reporter)
-      - uses: actions/upload-artifact@v3  # upload test results
-        if: success() || failure()        # run this step even if previous step failed
+      - uses: actions/upload-artifact@v4  # upload test results
+        if: ${{ !cancelled() }}           # run this step even if previous step failed
         with:
           name: test-results
           path: jest-junit.xml
@@ -99,7 +100,7 @@ jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-    - uses: dorny/test-reporter@v1
+    - uses: dorny/test-reporter@v2
       with:
         artifact: test-results            # artifact name
         name: JEST Tests                  # Name of the check run which will be created
@@ -110,7 +111,7 @@ jobs:
 ## Usage
 
 ```yaml
-- uses: dorny/test-reporter@v1
+- uses: dorny/test-reporter@v2
   with:
 
     # Name or regex of artifact containing test results
@@ -137,8 +138,10 @@ jobs:
 
     # Format of test results. Supported options:
     #   dart-json
+    #   dotnet-nunit
     #   dotnet-trx
     #   flutter-json
+    #   golang-json
     #   java-junit
     #   jest-junit
     #   mocha-json
@@ -150,9 +153,23 @@ jobs:
     # Detailed listing of test suites and test cases will be skipped.
     only-summary: 'false'
 
+    # Allows you to generate reports for Actions Summary
+    # https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/
+    use-actions-summary: 'true'
+    
+    # Optionally specify a title (Heading level 1) for the report. Leading and trailing whitespace are ignored.
+    # This is useful for separating your test report from other sections in the build summary.
+    # If omitted or set to whitespace/empty, no title will be printed.
+    report-title: ''
+
+    # Customize the title of badges shown for each Actions Summary.
+    # Useful when distinguish summaries for tests ran in multiple Actions steps.
+    badge-title: 'tests'
+
     # Limits which test suites are listed:
     #   all
     #   failed
+    #   none
     list-suites: 'all'
 
     # Limits which test cases are listed:
@@ -264,6 +281,13 @@ For more information see:
 </details>
 
 <details>
+  <summary>golang-json</summary>
+
+You must use the `-json` flag and output the results to a file (ex: `go test -json > testresults.json`)
+
+</details>
+
+<details>
   <summary>java-junit (Experimental)</summary>
 
 Support for [JUnit](https://Junit.org/) XML is experimental - should work but it was not extensively tested.
@@ -307,16 +331,22 @@ Configuration of `uniqueOutputName`, `suiteNameTemplate`, `classNameTemplate`, `
 - Mocha version [v7.2.0](https://github.com/mochajs/mocha/releases/tag/v7.2.0) or higher
 - Usage of [json](https://mochajs.org/#json) reporter.
 
-You can use the following example configuration in `package.json`:
+For Mocha >= [v9.1.0](https://github.com/mochajs/mocha/releases/tag/v9.1.0), you can use the following example configuration in `package.json`:
+```json
+"scripts": {
+  "test": "mocha --reporter json --reporter-option output=test-results.json"
+}
+```
+
+For Mocha < v9.1, the command should look like this:
 ```json
 "scripts": {
   "test": "mocha --reporter json > test-results.json"
 }
 ```
-
-Test processing might fail if any of your tests write anything on standard output.
-Mocha, unfortunately, doesn't have the option to store `json` output directly to the file, and we have to rely on redirecting its standard output.
-There is a work in progress to fix it: [mocha#4607](https://github.com/mochajs/mocha/pull/4607)
+Additionally, test processing might fail if any of your tests write anything on standard output.
+Before version [v9.1.0](https://github.com/mochajs/mocha/releases/tag/v9.1.0), Mocha doesn't have the option to store `json` output directly to the file, and we have to rely on redirecting its standard output ([mocha#4607](https://github.com/mochajs/mocha/pull/4607)).
+Please update Mocha to version [v9.1.0](https://github.com/mochajs/mocha/releases/tag/v9.1.0) or above if you encounter this issue.
 </details>
 
 <details>
@@ -329,9 +359,9 @@ Support for Swift test results in xUnit format is experimental - should work but
 
 Unfortunately, there are some known issues and limitations caused by GitHub API:
 
-- Test report (i.e. Check Run summary) is markdown text. No custom styling or HTML is possible.
+- Test report (i.e. build summary) is Markdown text. No custom styling or HTML is possible.
 - Maximum report size is 65535 bytes. Input parameters `list-suites` and `list-tests` will be automatically adjusted if max size is exceeded.
-- Test report can't reference any additional files (e.g. screenshots). You can use `actions/upload-artifact@v3` to upload them and inspect them manually.
+- Test report can't reference any additional files (e.g. screenshots). You can use `actions/upload-artifact@v4` to upload them and inspect them manually.
 - Check Runs are created for specific commit SHA. It's not possible to specify under which workflow test report should belong if more
   workflows are running for the same SHA. Thanks to this GitHub "feature" it's possible your test report will appear in an unexpected place in GitHub UI.
   For more information, see [#67](https://github.com/dorny/test-reporter/issues/67).
