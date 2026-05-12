@@ -1,29 +1,33 @@
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import {GitHub} from '@actions/github/lib/utils'
+import {randomBytes} from 'node:crypto'
+import {writeFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 
-import {ArtifactProvider} from './input-providers/artifact-provider'
-import {LocalFileProvider} from './input-providers/local-file-provider'
-import {FileContent} from './input-providers/input-provider'
-import {ParseOptions, TestParser} from './test-parser'
-import {TestRunResult} from './test-results'
-import {getAnnotations} from './report/get-annotations'
-import {getReport} from './report/get-report'
+import {ArtifactProvider} from './input-providers/artifact-provider.js'
+import {LocalFileProvider} from './input-providers/local-file-provider.js'
+import {FileContent} from './input-providers/input-provider.js'
+import {ParseOptions, TestParser} from './test-parser.js'
+import {TestRunResult} from './test-results.js'
+import {getAnnotations} from './report/get-annotations.js'
+import {getReport} from './report/get-report.js'
 
-import {DartJsonParser} from './parsers/dart-json/dart-json-parser'
-import {DotnetNunitParser} from './parsers/dotnet-nunit/dotnet-nunit-parser'
-import {DotnetTrxParser} from './parsers/dotnet-trx/dotnet-trx-parser'
-import {GolangJsonParser} from './parsers/golang-json/golang-json-parser'
-import {JavaJunitParser} from './parsers/java-junit/java-junit-parser'
-import {JestJunitParser} from './parsers/jest-junit/jest-junit-parser'
-import {MochaJsonParser} from './parsers/mocha-json/mocha-json-parser'
-import {PhpunitJunitParser} from './parsers/phpunit-junit/phpunit-junit-parser'
-import {PythonXunitParser} from './parsers/python-xunit/python-xunit-parser'
-import {RspecJsonParser} from './parsers/rspec-json/rspec-json-parser'
-import {SwiftXunitParser} from './parsers/swift-xunit/swift-xunit-parser'
-import {NetteTesterJunitParser} from './parsers/tester-junit/tester-junit-parser'
-import {normalizeDirPath, normalizeFilePath} from './utils/path-utils'
-import {getCheckRunContext} from './utils/github-utils'
+import {DartJsonParser} from './parsers/dart-json/dart-json-parser.js'
+import {DotnetNunitParser} from './parsers/dotnet-nunit/dotnet-nunit-parser.js'
+import {DotnetTrxParser} from './parsers/dotnet-trx/dotnet-trx-parser.js'
+import {GolangJsonParser} from './parsers/golang-json/golang-json-parser.js'
+import {JavaJunitParser} from './parsers/java-junit/java-junit-parser.js'
+import {JestJunitParser} from './parsers/jest-junit/jest-junit-parser.js'
+import {MochaJsonParser} from './parsers/mocha-json/mocha-json-parser.js'
+import {PhpunitJunitParser} from './parsers/phpunit-junit/phpunit-junit-parser.js'
+import {PythonXunitParser} from './parsers/python-xunit/python-xunit-parser.js'
+import {RspecJsonParser} from './parsers/rspec-json/rspec-json-parser.js'
+import {SwiftXunitParser} from './parsers/swift-xunit/swift-xunit-parser.js'
+import {NetteTesterJunitParser} from './parsers/tester-junit/tester-junit-parser.js'
+import {normalizeDirPath, normalizeFilePath} from './utils/path-utils.js'
+import {getCheckRunContext} from './utils/github-utils.js'
 
 async function main(): Promise<void> {
   try {
@@ -43,12 +47,14 @@ class TestReporter {
   readonly reporter = core.getInput('reporter', {required: true})
   readonly listSuites = core.getInput('list-suites', {required: true}) as 'all' | 'failed' | 'none'
   readonly listTests = core.getInput('list-tests', {required: true}) as 'all' | 'failed' | 'none'
+  readonly listFiles = core.getInput('list-files', {required: true}) as 'all' | 'failed' | 'none'
   readonly maxAnnotations = parseInt(core.getInput('max-annotations', {required: true}))
   readonly failOnError = core.getInput('fail-on-error', {required: true}) === 'true'
   readonly failOnEmpty = core.getInput('fail-on-empty', {required: true}) === 'true'
   readonly workDirInput = core.getInput('working-directory', {required: false})
   readonly onlySummary = core.getInput('only-summary', {required: false}) === 'true'
   readonly useActionsSummary = core.getInput('use-actions-summary', {required: false}) === 'true'
+  readonly slugPrefix = `tr-${randomBytes(4).toString('base64url')}-`
   readonly badgeTitle = core.getInput('badge-title', {required: false})
   readonly reportTitle = core.getInput('report-title', {required: false})
   readonly collapsed = core.getInput('collapsed', {required: false}) as 'auto' | 'always' | 'never'
@@ -66,6 +72,11 @@ class TestReporter {
 
     if (this.listTests !== 'all' && this.listTests !== 'failed' && this.listTests !== 'none') {
       core.setFailed(`Input parameter 'list-tests' has invalid value`)
+      return
+    }
+
+    if (this.listFiles !== 'all' && this.listFiles !== 'failed' && this.listFiles !== 'none') {
+      core.setFailed(`Input parameter 'list-files' has invalid value`)
       return
     }
 
@@ -144,6 +155,7 @@ class TestReporter {
     core.setOutput('failed', failed)
     core.setOutput('skipped', skipped)
     core.setOutput('time', time)
+    core.setOutput('slug_prefix', this.slugPrefix)
 
     if (this.failOnError && isFailed) {
       core.setFailed(`Failed test were found and 'fail-on-error' option is set to ${this.failOnError}`)
@@ -174,7 +186,17 @@ class TestReporter {
       }
     }
 
-    const {listSuites, listTests, onlySummary, useActionsSummary, badgeTitle, reportTitle, collapsed} = this
+    const {
+      listSuites,
+      listTests,
+      slugPrefix,
+      listFiles,
+      onlySummary,
+      useActionsSummary,
+      badgeTitle,
+      reportTitle,
+      collapsed
+    } = this
 
     const passed = results.reduce((sum, tr) => sum + tr.passed, 0)
     const failed = results.reduce((sum, tr) => sum + tr.failed, 0)
@@ -188,6 +210,8 @@ class TestReporter {
         {
           listSuites,
           listTests,
+          slugPrefix,
+          listFiles,
           baseUrl,
           onlySummary,
           useActionsSummary,
@@ -200,6 +224,7 @@ class TestReporter {
 
       core.info('Summary content:')
       core.info(summary)
+      this.writeSummaryFile(summary)
       await core.summary.addRaw(summary).write()
     } else {
       core.info(`Creating check run ${name}`)
@@ -219,6 +244,8 @@ class TestReporter {
       const summary = getReport(results, {
         listSuites,
         listTests,
+        slugPrefix,
+        listFiles,
         baseUrl,
         onlySummary,
         useActionsSummary,
@@ -229,6 +256,7 @@ class TestReporter {
 
       core.info('Creating annotations')
       const annotations = getAnnotations(results, this.maxAnnotations)
+      this.writeSummaryFile(summary)
 
       const isFailed = this.failOnError && results.some(tr => tr.result === 'failed')
       const conclusion = isFailed ? 'failure' : 'success'
@@ -253,6 +281,14 @@ class TestReporter {
     }
 
     return results
+  }
+
+  writeSummaryFile(summary: string): void {
+    const dir = process.env.RUNNER_TEMP || tmpdir()
+    const file = join(dir, `test-reporter-summary-${randomBytes(8).toString('hex')}.md`)
+    writeFileSync(file, summary)
+    core.info(`Summary written to ${file}`)
+    core.setOutput('summary_file', file)
   }
 
   getParser(reporter: string, options: ParseOptions): TestParser {

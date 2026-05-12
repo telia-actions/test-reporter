@@ -1,9 +1,9 @@
 import * as core from '@actions/core'
-import {TestExecutionResult, TestRunResult, TestSuiteResult} from '../test-results'
-import {Align, formatTime, Icon, link, table} from '../utils/markdown-utils'
-import {DEFAULT_LOCALE} from '../utils/node-utils'
-import {getFirstNonEmptyLine} from '../utils/parse-utils'
-import {slug} from '../utils/slugger'
+import {TestExecutionResult, TestRunResult, TestSuiteResult} from '../test-results.js'
+import {Align, formatTime, Icon, link, table} from '../utils/markdown-utils.js'
+import {DEFAULT_LOCALE} from '../utils/node-utils.js'
+import {getFirstNonEmptyLine} from '../utils/parse-utils.js'
+import {slug} from '../utils/slugger.js'
 
 const MAX_REPORT_LENGTH = 65535
 const MAX_ACTIONS_SUMMARY_LENGTH = 1048576
@@ -11,6 +11,8 @@ const MAX_ACTIONS_SUMMARY_LENGTH = 1048576
 export interface ReportOptions {
   listSuites: 'all' | 'failed' | 'none'
   listTests: 'all' | 'failed' | 'none'
+  slugPrefix: string
+  listFiles: 'all' | 'failed' | 'none'
   baseUrl: string
   onlySummary: boolean
   useActionsSummary: boolean
@@ -22,6 +24,8 @@ export interface ReportOptions {
 export const DEFAULT_OPTIONS: ReportOptions = {
   listSuites: 'all',
   listTests: 'all',
+  slugPrefix: '',
+  listFiles: 'all',
   baseUrl: '',
   onlySummary: false,
   useActionsSummary: true,
@@ -171,21 +175,29 @@ function getTestRunsReport(testRuns: TestRunResult[], options: ReportOptions): s
     sections.push(` `)
   }
 
-  if (testRuns.length > 0 || options.onlySummary) {
-    const tableData = testRuns
-      .map((tr, originalIndex) => ({tr, originalIndex}))
-      .filter(({tr}) => tr.passed > 0 || tr.failed > 0 || tr.skipped > 0)
-      .map(({tr, originalIndex}) => {
-        const time = formatTime(tr.time)
-        const name = tr.path
-        const addr = options.baseUrl + makeRunSlug(originalIndex, options).link
-        const nameLink = link(name, addr)
-        const passed = tr.passed > 0 ? `${tr.passed} ${Icon.success}` : ''
-        const failed = tr.failed > 0 ? `${tr.failed} ${Icon.fail}` : ''
-        const skipped = tr.skipped > 0 ? `${tr.skipped} ${Icon.skip}` : ''
-        return [nameLink, passed, failed, skipped, time]
-      })
+  // Filter test runs based on list-files option
+  const filteredTestRuns =
+    options.listFiles === 'failed'
+      ? testRuns.filter(tr => tr.result === 'failed')
+      : options.listFiles === 'none'
+        ? []
+        : testRuns
 
+  const tableData = filteredTestRuns
+    .map((tr, originalIndex) => ({tr, originalIndex}))
+    .filter(({tr}) => tr.passed > 0 || tr.failed > 0 || tr.skipped > 0)
+    .map(({tr, originalIndex}) => {
+      const time = formatTime(tr.time)
+      const name = tr.path
+      const addr = options.baseUrl + makeRunSlug(originalIndex, options).link
+      const nameLink = link(name, addr)
+      const passed = tr.passed > 0 ? `${tr.passed} ${Icon.success}` : ''
+      const failed = tr.failed > 0 ? `${tr.failed} ${Icon.fail}` : ''
+      const skipped = tr.skipped > 0 ? `${tr.skipped} ${Icon.skip}` : ''
+      return [nameLink, passed, failed, skipped, time]
+    })
+
+  if (tableData.length > 0) {
     const resultsTable = table(
       ['Report', 'Passed', 'Failed', 'Skipped', 'Time'],
       [Align.Left, Align.Right, Align.Right, Align.Right, Align.Right],
@@ -195,7 +207,7 @@ function getTestRunsReport(testRuns: TestRunResult[], options: ReportOptions): s
   }
 
   if (options.onlySummary === false) {
-    const suitesReports = testRuns.map((tr, i) => getSuitesReport(tr, i, options)).flat()
+    const suitesReports = filteredTestRuns.map((tr, i) => getSuitesReport(tr, i, options)).flat()
     sections.push(...suitesReports)
   }
 

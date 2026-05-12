@@ -47,12 +47,12 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4     # checkout the repo
+      - uses: actions/checkout@v6     # checkout the repo
       - run: npm ci                   # install packages
       - run: npm test                 # run tests (configured to use jest-junit reporter)
 
       - name: Test Report
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         if: ${{ !cancelled() }}       # run this step even if previous step failed
         with:
           name: JEST Tests            # Name of the check run which will be created
@@ -78,10 +78,10 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4         # checkout the repo
+      - uses: actions/checkout@v6         # checkout the repo
       - run: npm ci                       # install packages
       - run: npm test                     # run tests (configured to use jest-junit reporter)
-      - uses: actions/upload-artifact@v4  # upload test results
+      - uses: actions/upload-artifact@v7  # upload test results
         if: ${{ !cancelled() }}           # run this step even if previous step failed
         with:
           name: test-results
@@ -103,7 +103,7 @@ jobs:
   report:
     runs-on: ubuntu-latest
     steps:
-    - uses: dorny/test-reporter@v2
+    - uses: dorny/test-reporter@v3
       with:
         artifact: test-results            # artifact name
         name: JEST Tests                  # Name of the check run which will be created
@@ -114,7 +114,7 @@ jobs:
 ## Usage
 
 ```yaml
-- uses: dorny/test-reporter@v2
+- uses: dorny/test-reporter@v3
   with:
 
     # Name or regex of artifact containing test results
@@ -184,6 +184,12 @@ jobs:
     #   none
     list-tests: 'all'
 
+    # Limits which test result files are listed:
+    #   all
+    #   failed
+    #   none
+    list-files: 'all'
+
     # Limits number of created annotations with error message and stack trace captured during test execution.
     # Must be less or equal to 50.
     max-annotations: '10'
@@ -193,6 +199,13 @@ jobs:
 
     # Set this action as failed if no test results were found
     fail-on-empty: 'true'
+
+    # Controls whether test report details are collapsed or expanded.
+    # Supported options:
+    #   auto: Collapse only if all tests pass (default behavior)
+    #   always: Always collapse the report details
+    #   never: Always expand the report details
+    collapsed: 'auto'
 
     # Relative path under $GITHUB_WORKSPACE where the repository was checked out.
     working-directory: ''
@@ -212,6 +225,8 @@ jobs:
 | time       | Test execution time [ms] |
 | url        | Check run URL            |
 | url_html   | Check run URL HTML       |
+| summary_file | Path to a file containing the generated test report summary in Markdown format |
+| slug_prefix| Random anchor links slug prefix generated for the summary headers |
 
 ## Supported formats
 
